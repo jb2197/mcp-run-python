@@ -250,6 +250,8 @@ export class RunCode {
               error: pyodideWorker.prepareStatus.message,
             }
           } else if (file) {
+            // keep a tiny noop heartbeat on the main thread so the event loop stays active and promptly processes the work's execution results, it seems the python messages are never resolved (or sent back) if the main thread is completely idle
+            let heartbeat: ReturnType<typeof setInterval> | undefined
             try {
               // defaults in case file output is not enabled
               let folderPath = ''
@@ -265,6 +267,11 @@ export class RunCode {
 
               // run the code with pyodide including a timeout
               let timeoutId: any
+              log('info', 'runPythonAsync begin')
+              // lightweight heartbeat to keep the event loop active without noisy logs
+              heartbeat = setInterval(() => {
+                /* noop */
+              }, 100)
               const rawValue = await Promise.race([
                 pyodideWorker.pyodide.runPythonAsync(file.content, {
                   globals: pyodideWorker.pyodide.toPy({ ...(globals || {}), __name__: '__main__' }),
@@ -280,6 +287,7 @@ export class RunCode {
                 }),
               ])
               clearTimeout(timeoutId)
+              if (heartbeat) clearInterval(heartbeat)
 
               if (enableFileOutputs) {
                 // check files that got saved
@@ -294,6 +302,11 @@ export class RunCode {
                 embeddedResources: files,
               }
             } catch (err) {
+              try {
+                if (typeof heartbeat !== 'undefined') clearInterval(heartbeat)
+              } catch (_) {
+                // ignore
+              }
               try {
                 pyodideWorker.pyodide.FS.unmount('/output_files')
               } catch (_) {
